@@ -1,0 +1,383 @@
+#!/usr/bin/python
+# vim: set ts=4 sw=4 et :
+#
+# serlogin - program to perform a login on a serial port
+#
+# Copyright 2017 Sony Corporation
+#
+# This program is provided under the Gnu General Public License (GPL)
+# version 2 ONLY. This program is distributed WITHOUT ANY WARRANTY.
+# See the LICENSE file, which should have accompanied this program,
+# for the text of the license.
+#
+# Started: 2017-05-03 by Tim Bird
+# Based on code from grabserial
+#
+# To do:
+#  - handle starting on secondary shell prompt
+#    - a common secondary shell prompt is: '\n> '
+#  - handle starting in middle of command entry
+#
+# NOTE: This program has lots of debug info.  serial port/expect-type
+# operations are a real pain to debug.
+# CHANGELOG:
+
+VERSION=(0,4,0)
+
+import os, sys
+import getopt
+import serial
+import time
+
+verbose = False
+debug = False
+
+def vprint(message):
+    if verbose:
+        print(message)
+
+def dprint(message):
+    if debug:
+        print(message)
+
+def usage(rcode):
+    cmd = "serlogin"
+
+    print("""%s : login over serial console
+        Usage: %s [options] <user>
+options:
+    -h, --help             Print this message
+    -d, --device=<devpath> Set the device to read (default '/dev/ttyS0')
+    -b, --baudrate=<val>   Set the baudrate (default 115200)
+    -B <val>               Force the baudrate to the indicated value
+                             (serlogin won't check that the baudrate is legal)
+    -w, --width=<val>      Set the data bit width (default 8)
+    -p, --parity=<val>     Set the parity (default N)
+    -s, --stopbits=<val>   Set the stopbits (default 1)
+    -x, --xonxoff          Enable software flow control (default off)
+    -r, --rtscts           Enable RTS/CTS flow control (default off)
+    -f, --force-reset      Force reset of serial device parameters
+    -e, --endtime=<secs>   End the program after the specified seconds have
+                           elapsed.
+    -c, --command=<cmd>    Send a command to the port before reading
+    -v, --verbose          Show verbose runtime messages
+    -V, --version          Show version number and exit
+    -P, --password=<pwd>   Use <pwd> as the login password
+    -l, --login-prompt=<str>  Use str as the login prompt (default is 'login:')
+""" % (cmd, cmd))
+    sys.exit(rcode)
+
+# returns data until a timeout
+def read_until_timeout(sd, timeout):
+    saved_timeout = sd.timeout
+    sd.timeout = timeout
+
+    starttime=time.time()
+    endtime=starttime + timeout
+    dprint("starttime=%f" % starttime)
+    data = ""
+    while time.time() < endtime:
+        x = sd.read(10000)
+        data += x
+
+    dprint("in read_until_timeout(%d): x='%s'" % (timeout, data))
+    sd.timeout = saved_timeout
+    dprint("finish time=%f" % time.time())
+    return data
+
+# returns (result, data) with result=True if expected_data was received
+def read_until_data(sd, endtime, expected_data):
+    global verbose
+    global debug
+
+    result = False
+    data = ""
+    while(1):
+        # see if we're supposed to stop yet
+        if endtime and time.time()>endtime:
+            break
+
+        # read 1 byte of data from the port
+        x = sd.read()
+        if debug:
+            sys.stdout.write("%s," % x)
+            sys.stdout.flush()
+
+        # if we didn't read anything, loop
+        if len(x)==0:
+            continue
+
+        # ignore carriage returns
+        if x=="\r":
+            continue
+
+        data += x
+
+        if data.find(expected_data) != -1:
+            dprint("in read_until_data: data='%s'" % data)
+            dprint("in read_until_data: found expected data '%s'" % expected_data)
+            result = True
+            break
+
+    # more debug output
+    if not result:
+       dprint("in read_until_data: data='%s'" % data)
+       dprint("in read_until_data: did not find expected data '%s'" % expected_data)
+
+    return (result, data)
+
+# main - main routine to login to system at other end of the serial port
+def main(arglist):
+    global verbose
+    global debug
+
+    # parse the command line options
+    try:
+        optlist, args = getopt.getopt(arglist,
+           "hl:d:b:B:w:p:s:xrfc:te:vVP:", [
+                "help",
+                "device=",
+                "baudrate=",
+                "width=",
+                "parity=",
+                "stopbits=",
+                "xonxoff",
+                "rtscts",
+                "command=",
+                "endtime=",
+                "verbose",
+                "version",
+                "password=",
+                "debug",
+                "login-prompt=",
+                ])
+    except:
+        # print help info and exit
+        print("Error parsing command line options")
+        usage(2)
+
+    sd = serial.Serial()
+    sd.port="/dev/ttyS0"
+    sd.baudrate=115200
+    sd.bytesize=serial.EIGHTBITS
+    sd.parity=serial.PARITY_NONE
+    sd.stopbits=serial.STOPBITS_ONE
+    sd.xonxoff=False
+    sd.rtscts=False
+    sd.dsrdtr=False
+    # specify a read timeout of 1 second
+    sd.timeout=1
+    force = False
+    endtime = 0
+    command = ""
+    password = None
+    login_prompt = "login:"
+
+    for opt, arg in optlist:
+        if opt in ["-h", "--help"]:
+            usage(0)
+        if opt in ["-d", "--device"]:
+            device = arg
+            sd.port = device
+        if opt in ["-b", "--baudrate"]:
+            baud = int(arg)
+            if baud not in sd.BAUDRATES:
+                print("Error: invalid baud rate '%d' specified" % baud)
+                print("Valid baud rates are: %s" % str(sd.BAUDRATES))
+                print("You can force the baud rate using the -B option")
+                sd.close()
+                sys.exit(3)
+            sd.baudrate = baud
+        if opt == "-B":
+            sd.baudrate = int(arg)
+        if opt in ["-p", "--parity"]:
+            par = arg.upper()
+            if par not in sd.PARITIES:
+                print("Error: invalid parity '%s' specified" % par)
+                print("Valid parities are: %s" % str(sd.PARITIES))
+                sd.close()
+                sys.exit(3)
+            sd.parity = par
+        if opt in ["-w", "--width"]:
+            width = int(arg)
+            if width not in sd.BYTESIZES:
+                print("Error: invalid data bit width '%d' specified" % width)
+                print("Valid data bit widths are: %s" % str(sd.BYTESIZES))
+                sd.close()
+                sys.exit(3)
+            sd.bytesize = width
+        if opt in ["-s", "--stopbits"]:
+            stop = int(arg)
+            if stop not in sd.STOPBITS:
+                print("Error: invalid stopbits '%d' specified" % stop)
+                print("Valid stopbits are: %s" % str(sd.STOPBITS))
+                sd.close()
+                sys.exit(3)
+            sd.stopbits = stop
+        if opt in ["-c", "--command"]:
+            command = arg
+        if opt in ["-x", "--xonxoff"]:
+            sd.xonxoff = True
+        if opt in ["-r", "--rtscts"]:
+            sd.rtscts = True
+        if opt in ["-f", "--force-reset"]:
+            force = True
+        if opt in ["-e", "--endtime"]:
+            endstr=arg
+            try:
+                endtime = time.time()+float(endstr)
+            except:
+                print("Error: invalid endtime %s specified" % arg)
+                sd.close()
+                sys.exit(3)
+        if opt in ["-v", "--verbose"]:
+            verbose = True
+        if opt in ["-V", "--version"]:
+            print("serlogin version %d.%d.%d" % VERSION)
+            sd.close()
+            sys.exit(0)
+        if opt in ["-P", "--password"]:
+            password = arg
+        if opt in ["--debug"]:
+            debug = True
+        if opt in ["-l", "--login-prompt"]:
+            login_prompt = arg
+
+    if not len(args)==1:
+        print("Error: No <user> found on command line.")
+        print("For usage, use 'serlogin -h'.")
+        sys.exit(3)
+
+    user = args[0]
+
+    vprint("Opening serial port %s" % sd.port)
+    dprint("%d:%d%s%s:xonxoff=%d:rtscts=%d" % (sd.baudrate, sd.bytesize,
+         sd.parity, sd.stopbits, sd.xonxoff, sd.rtscts))
+
+    if force:
+    # pyserial does not reconfigure the device if the settings
+    # don't change from the previous ones.  This causes issues
+    # with (at least) some USB serial converters
+        toggle = sd.xonxoff
+        sd.xonxoff = not toggle
+        sd.open()
+        sd.close()
+        sd.xonxoff = toggle
+    sd.open()
+    sd.flushInput()
+    sd.flushOutput()
+
+    if command:
+        vprint("Writing command '%s' to serial port" % command)
+        sd.write(command + "\n")
+        sd.flush()
+
+    # we start either at a shell prompt, or at a login prompt
+    # FIXTHIS - could be at a secondary shell prompt - handle that case too
+    # FIXTHIS - could be in middle of command entry - handle that case too
+    #  (try issuing a \n and see if we get a shell prompt)
+
+    # do a test command to see if we're logged in
+    dprint("writing 'ls / | grep ^sb.*n' to serial port")
+    sd.write("ls / | grep ^sb.*n\n")
+    result = read_until_timeout(sd, 1)
+    need_logout = False
+    if result.find("sbin") != -1:
+        vprint("Port %s appears to be at a shell prompt" % sd.port)
+        # FIXTHIS - shortcut: verify that we are logged in as the requested user
+        sd.write("id\n")
+        # this next line doesn't work
+        data = read_until_timeout(sd, 0.5)
+        dprint("data from id: '%s'" % data)
+        id_user = "(%s)" % user
+        # user name must appear before 'gid' in the output from 'id'
+        user_pos = data.find(id_user)
+        gid_pos = data.find("gid")
+        if user_pos != -1 and user_pos < gid_pos:
+            print("Logged in as user %s" % user)
+            return 0
+        else:
+            vprint("Not logged in as user %s" % user)
+            need_logout=True
+    else:
+        dprint("Serial port %s is NOT at a shell prompt" % sd.port)
+        need_logout=False
+
+    if need_logout:
+        # First - try to log out (and get to the login prompt)
+        # FIXTHIS - this doesn't work on systems where init doesn't invoke
+        # /bin/login (and/or inittab doesn't respawn getty for the line)
+        dprint("Attempting to exit existing shell")
+        sd.write("exit\n")
+
+        # if we were already at the login prompt, exit may be interpreted
+        # as the user name, and we could be at a password prompt.  Just
+        # enter nothing.  If we ended up at a login prompt after exiting,
+        # sending a line feed should not prompt for password.
+        prompt = read_until_timeout(sd, 1)
+        dprint("Sending line feed.")
+        sd.write("\n")
+
+    retcode = 1
+
+    # perform login attempt
+
+    # send line feed, and check for login prompt
+    dprint("Sending line feed")
+    sd.write("\n")
+    expected_prompt=login_prompt
+    result, data = read_until_data(sd, endtime, expected_prompt)
+    dprint("Received data '%s'" % data)
+    dprint("Expected_prompt of '%s' was found in data" % expected_prompt)
+
+    vprint("Logging in as user: '%s'" % user)
+    sd.write(user+"\n")
+
+    # drain the port (could be shell prompt or password prompt)
+    data = read_until_timeout(sd, 2)
+    dprint("Received data '%s'" % data)
+
+    if password != None:
+        # FIXTHIS - should verify the password prompt
+        dprint("Sending password")
+        sd.write(password+"\n")
+
+        # drain the port (should be shell prompt)
+        data = read_until_timeout(sd, 2)
+        dprint("Received data (2) '%s'" % data)
+
+    # FIXTHIS - could verify that we received a shell prompt
+    #   (we would need to know what one looks like)
+
+    # do a test command to see if we're logged in
+    dprint("Testing login status by looking for /sbin")
+    sd.write("ls / | grep ^sb.*n\n")
+    result = read_until_timeout(sd, 1)
+    # it appears that read_until_timeout returns sooner than timeout
+    # that is, when first \n is encountered
+    dprint("Result of shell operation: '%s'" % result)
+    if result.find("sbin") != -1:
+        dprint("/sbin found (first attempt).")
+        vprint("Port %s appears to be at a shell prompt." % sd.port)
+        print("Logged in as user %s" % user)
+        retcode = 0
+    else:
+        dprint("/sbin not found (first attempt).")
+        # give system time to respond
+        time.sleep(1)
+        result = read_until_timeout(sd, 1)
+        dprint("Result of shell operation: '%s'" % result)
+        if result.find("sbin") != -1:
+            dprint("/sbin found (second attempt).")
+            vprint("Port %s appears to be at a shell prompt." % sd.port)
+        else:
+            dprint("/sbin not found (second attempt).")
+            print("Warning: Could not verify shell status")
+
+    sd.close()
+    sys.stdout.flush()
+
+    sys.exit(retcode)
+
+if __name__=="__main__":
+    main(sys.argv[1:])
