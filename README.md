@@ -24,11 +24,12 @@ See the usage for information about options.
 Usage for serlogin is available with '-h'.
 
 Here are some examples:
- $ serlogin -d /dev/ttyUSB0 root
+
+   $ serlogin -d /dev/ttyUSB0 root
 
 Login as root to the machine connected to the serial port ttyUSB0
 
- $ serlogin -d /dev/ttyACM1 -P mypassword user1
+   $ serlogin -d /dev/ttyACM1 -P mypassword user1
 
 Login as user1, using password 'mypassword' to the machine connected
 to serial port /ttyACM1
