@@ -32,7 +32,7 @@ Login as root to the machine connected to the serial port ttyUSB0
    $ serlogin -d /dev/ttyACM1 -P mypassword user1
 
 Login as user1, using password 'mypassword' to the machine connected
-to serial port /ttyACM1
+to serial port ttyACM1
 
 serlogin assumes that the login prompt has the string 'login:' in it.
 If your machine uses some other login prompt, you can specify it on
@@ -45,4 +45,5 @@ command line.  It is also sometimes useful to use serlogin with 'strace'
 to see the exchange of data between serlogin and the remote machine.
 
 Good Luck,
+
  -- Tim Bird
