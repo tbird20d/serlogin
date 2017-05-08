@@ -19,7 +19,9 @@
 #  - handle starting in middle of command entry
 #
 # NOTE: This program has lots of debug info.  serial port/expect-type
-# operations are a real pain to debug.
+# operations are a real pain to debug.  To turn on debugging, use
+# the '--debug' command line option.
+#
 # CHANGELOG:
 
 VERSION=(0,4,0)
