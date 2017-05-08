@@ -1,6 +1,4 @@
-# serlogin
-Serial port login program
-
+# serlogin - Serial port login program
 This program is intended to be used in conjunction with serio
 (see https://github.com/frowand/serio) to provide complete
 support for handling a Linux machine over a serial port in
@@ -14,7 +12,7 @@ Commands needed on the target machine are: ls, grep, and id.
 
 # Installing
 To use serlogin, place it somewhere on your path (usually somewhere
-like /usr/local/bin, and make sure you have python and the python
+like /usr/local/bin), and make sure you have python and the python
 serial module installed.
 
 As of 2017, most modern Linux desktop distributions include the python
